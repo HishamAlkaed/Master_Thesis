@@ -189,8 +189,8 @@ def stacked_ensemble(df_train, df_test, models, classifier):
             accuracy = accuracy_score(df_test['label'], y_pred)
             
             # update the best combination of models if necessary
-            if f1 > best_f1_score:
-                best_f1_score = f1
+            if accuracy > best_f1_score:
+                best_f1_score = accuracy
                 best_combo = combo
                 best_performance = {'F1-score': f1, 'Precision': precision, 'Recall': recall, 'Accuracy': accuracy}
                 
