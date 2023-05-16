@@ -2,12 +2,32 @@ from PIL import Image
 import torch
 from transformers import AutoImageProcessor, ResNetModel
 from datasets import load_dataset, Image
-from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score, classification_report
+from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score, classification_report, roc_curve, auc
 from itertools import combinations
 import matplotlib.pyplot as plt
 import pandas as pd
+import spacy
+import numpy as np
+from transformers import AdamW, get_linear_schedule_with_warmup
+from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 
-def get_image_vectors(dataset, split):
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+def preprocess_row(row):
+    nlp = spacy.load('en_core_web_sm')
+    text = row['text']
+    doc = nlp(text)
+    tokens = []
+    for token in doc:
+        pos = token.pos_
+        lemma = token.lemma_
+        tokens.append((token.text, lemma, pos))
+    row['tokens'] = " ".join([t[0] for t in tokens])
+    row['lemmas'] = " ".join([t[1] for t in tokens])
+    row['upos'] = " ".join([t[2] for t in tokens])
+    return row
+
+def get_image_vectors(dataset, split, datafolder):
     """
     This function takes in a dataset and split (train, test or validation) and returns a list of image vectors.
 
@@ -18,7 +38,7 @@ def get_image_vectors(dataset, split):
     Returns:
         outputs_list (list): A list of image vectors for each image in the specified split.
     """
-
+    from PIL import Image
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Use GPU if available, otherwise use CPU
     image_processor = AutoImageProcessor.from_pretrained("microsoft/resnet-50")
     model = ResNetModel.from_pretrained("microsoft/resnet-50").to(device)
@@ -73,6 +93,122 @@ def get_text_vector(text, tokenizer, model):
     # Move the mean_last_hidden_state to the cpu and convert to a numpy array
     return mean_last_hidden_state.cpu().numpy()
 
+def fine_tune(df, tokenizer, model):
+    # Tokenize input texts and create input tensors
+    input_ids = []
+    attention_masks = []
+    labels = []
+    for text, label in zip(df['text'], df['label']):
+        encoded_dict = tokenizer.encode_plus(
+                            text,
+                            add_special_tokens = True,
+                            max_length = 64,
+                            pad_to_max_length = True,
+                            return_attention_mask = True,
+                            return_tensors = 'pt',
+                       )
+        input_ids.append(encoded_dict['input_ids'])
+        attention_masks.append(encoded_dict['attention_mask'])
+        labels.append(int(label))
+
+    input_ids = torch.cat(input_ids, dim=0)
+    attention_masks = torch.cat(attention_masks, dim=0)
+    labels = torch.tensor(labels)
+
+    # Create dataset and dataloader
+    dataset = TensorDataset(input_ids, attention_masks, labels)
+    train_sampler = RandomSampler(dataset)
+    train_dataloader = DataLoader(dataset, sampler=train_sampler, batch_size=32)
+
+    # Set up optimizer and scheduler
+    optimizer = AdamW(model.parameters(), lr=2e-5, eps=1e-8)
+    epochs = 10
+    total_steps = len(train_dataloader) * epochs
+    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+
+    # Fine-tune model
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0
+        for step, batch in enumerate(train_dataloader):
+            batch_input_ids = batch[0].to(device)
+            batch_attention_masks = batch[1].to(device)
+            batch_labels = batch[2].to(device)
+            model.zero_grad()
+            loss, logits = model(batch_input_ids, token_type_ids=None, attention_mask=batch_attention_masks, labels=batch_labels, return_dict=False)
+            total_loss += loss.item()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            scheduler.step()
+        avg_train_loss = total_loss / len(train_dataloader)
+        print(f"Finished epoch {epoch+1} with average training loss of {avg_train_loss}.")
+    return tokenizer, model
+
+# Function to calculate the accuracy of our predictions vs labels
+def flat_accuracy(preds, labels):
+    pred_flat = np.argmax(preds, axis=1).flatten()
+    labels_flat = labels.flatten()
+    return np.sum(pred_flat == labels_flat) / len(labels_flat)
+
+def predict_from_fine_tuned(df, tokenizer, model):
+    input_ids = []
+    attention_masks = []
+    labels = []
+    for text, label in zip(df['text'], df['label']):
+        encoded_dict = tokenizer.encode_plus(
+                            text,
+                            add_special_tokens = True,
+                            max_length = 64,
+                            pad_to_max_length = True,
+                            return_attention_mask = True,
+                            return_tensors = 'pt',
+                       )
+        input_ids.append(encoded_dict['input_ids'])
+        attention_masks.append(encoded_dict['attention_mask'])
+        labels.append(int(label))
+
+    input_ids = torch.cat(input_ids, dim=0)
+    attention_masks = torch.cat(attention_masks, dim=0)
+    labels = torch.tensor(labels)
+
+    dataset = TensorDataset(input_ids, attention_masks, labels)
+    val_sampler = SequentialSampler(dataset)
+    val_dataloader = DataLoader(dataset, sampler=val_sampler, batch_size=32)
+
+    # Evaluate model on validation data
+    model.eval()
+    total_val_accuracy = 0
+    preds = []
+    for batch in val_dataloader:
+        batch_input_ids = batch[0].to(device)
+        batch_attention_masks = batch[1].to(device)
+        batch_labels = batch[2].to(device)
+        with torch.no_grad():
+            outputs = model(batch_input_ids, token_type_ids=None, attention_mask=batch_attention_masks)
+        logits = outputs[0]
+        logits = logits.detach().cpu().numpy()
+        label_ids = batch_labels.to('cpu').numpy()
+        preds.extend(np.argmax(logits, axis=1))
+        total_val_accuracy += flat_accuracy(logits, label_ids)
+    return preds
+
+
+# Define function to classify text
+def classify_text(text):
+    # Tokenize input text
+    input_ids = tokenizer.encode(text, add_special_tokens=True, return_tensors='pt').to(device)
+
+    # Make prediction with model
+    model.eval()
+    with torch.no_grad():
+        output = model(input_ids)
+
+    # Get predicted label
+    predicted_label = torch.argmax(output[0], dim=1).item()
+
+    # Return predicted label
+    return predicted_label
 
 # Get the vectors for each string in the list
 def get_vectors(sentences, tokenizer, model):
@@ -112,9 +248,11 @@ def model_performance(df, models):
         y_true = df['label']
         y_pred = df[model]
         report = classification_report(y_true, y_pred, output_dict=True)
-        results.append({'model': model, 'f1_score': report['macro avg']['f1-score'], 'precision': report['macro avg']['precision'], 'recall': report['macro avg']['recall'], 'accuracy': report['accuracy']})
+        fpr, tpr, thresholds = roc_curve(y_true, y_pred)
+        AUROC = auc(fpr, tpr)
+        results.append({'model': model, 'f1_score': report['macro avg']['f1-score'], 'precision': report['macro avg']['precision'], 'recall': report['macro avg']['recall'], 'accuracy': report['accuracy'], 'AUROC': AUROC})
         df_results = pd.DataFrame(results) 
-        df_results = df_results.sort_values(by='f1_score', ascending=False)
+        df_results = df_results.sort_values(by='AUROC', ascending=False)
     return df_results
 
 def plot_disagreements(df, models, datafolder):
@@ -182,14 +320,15 @@ def stacked_ensemble(df_train, df_test, models, classifier):
             # make predictions on the test set
             y_pred = classifier.predict(X_test_combo)
             
-            # calculate the performance metrics
-            f1 = f1_score(df_test['label'], y_pred, average='macro')
-            precision = precision_score(df_test['label'], y_pred, average='macro')
-            recall = recall_score(df_test['label'], y_pred, average='macro')
+            
             accuracy = accuracy_score(df_test['label'], y_pred)
             
             # update the best combination of models if necessary
             if accuracy > best_f1_score:
+                # calculate the performance metrics
+                f1 = f1_score(df_test['label'], y_pred, average='macro')
+                precision = precision_score(df_test['label'], y_pred, average='macro')
+                recall = recall_score(df_test['label'], y_pred, average='macro')
                 best_f1_score = accuracy
                 best_combo = combo
                 best_performance = {'F1-score': f1, 'Precision': precision, 'Recall': recall, 'Accuracy': accuracy}
