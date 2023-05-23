@@ -10,6 +10,17 @@ import spacy
 import numpy as np
 from transformers import AdamW, get_linear_schedule_with_warmup
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+from scipy.special import softmax
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.svm import LinearSVC
+from sklearn.calibration import CalibratedClassifierCV
+from scipy.sparse import hstack
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from datasets import load_dataset, Image, concatenate_datasets
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -194,6 +205,54 @@ def predict_from_fine_tuned(df, tokenizer, model):
     return preds
 
 
+
+ # The probability at index `(i, 0)` is the probability that the `i`th text has `label=0`, and the probability at index `(i, 1)` is the probability that the `i`th text has `label=1`.
+def predict_proba_from_fine_tuned(df, tokenizer, model):
+    input_ids = []
+    attention_masks = []
+    labels = []
+    for text, label in zip(df['text'], df['label']):
+        encoded_dict = tokenizer.encode_plus(
+                            text,
+                            add_special_tokens = True,
+                            max_length = 64,
+                            pad_to_max_length = True,
+                            return_attention_mask = True,
+                            return_tensors = 'pt',
+                       )
+        input_ids.append(encoded_dict['input_ids'])
+        attention_masks.append(encoded_dict['attention_mask'])
+        labels.append(int(label))
+
+    input_ids = torch.cat(input_ids, dim=0)
+    attention_masks = torch.cat(attention_masks, dim=0)
+    labels = torch.tensor(labels)
+
+    dataset = TensorDataset(input_ids, attention_masks, labels)
+    val_sampler = SequentialSampler(dataset)
+    val_dataloader = DataLoader(dataset, sampler=val_sampler, batch_size=32)
+
+    # Evaluate model on validation data
+    model.eval()
+    total_val_accuracy = 0
+    preds = []
+    probabilities = []
+    for batch in val_dataloader:
+        batch_input_ids = batch[0].to(device)
+        batch_attention_masks = batch[1].to(device)
+        batch_labels = batch[2].to(device)
+        with torch.no_grad():
+            outputs = model(batch_input_ids, token_type_ids=None, attention_mask=batch_attention_masks)
+        logits = outputs[0]
+        logits = logits.detach().cpu().numpy()
+        label_ids = batch_labels.to('cpu').numpy()
+        batch_probs = softmax(logits, axis=-1)
+        preds.extend(np.argmax(logits, axis=1))
+        probabilities.extend(batch_probs)
+
+    probabilities = np.asarray(probabilities)
+    return probabilities    
+    
 # Define function to classify text
 def classify_text(text):
     # Tokenize input text
@@ -329,9 +388,15 @@ def stacked_ensemble(df_train, df_test, models, classifier):
                 f1 = f1_score(df_test['label'], y_pred, average='macro')
                 precision = precision_score(df_test['label'], y_pred, average='macro')
                 recall = recall_score(df_test['label'], y_pred, average='macro')
+                fpr, tpr, thresholds = roc_curve(df_test['label'], y_pred)
+                AUROC = auc(fpr, tpr)
                 best_f1_score = accuracy
                 best_combo = combo
-                best_performance = {'F1-score': f1, 'Precision': precision, 'Recall': recall, 'Accuracy': accuracy}
+                best_performance = {'F1-score': f1, 
+                                    'Precision': precision, 
+                                    'Recall': recall, 
+                                    'Accuracy': accuracy, 
+                                    'AUROC':AUROC}
                 
     return best_combo, best_performance
 
@@ -416,3 +481,231 @@ def plot_disagreements_by_true(df, models, datafolder, num_true):
                 ax.text(0, 25 + j * 20, f"{model[:4]}", color='red', fontsize=10)
             else:
                 ax.text(0, 25 + j * 20, f"{model[:4]}", color='green', fontsize=10)
+
+                
+                
+                
+                
+class MLP(nn.Module):
+    def __init__(self):
+        super(MLP, self).__init__()
+        self.flattening = nn.Flatten()
+        self.fc1 = nn.Linear(4, 8)
+        self.fc2 = nn.Linear(8, 4)
+        self.dropout = nn.Dropout(p=0.5)
+        self.fc3 = nn.Linear(4, 2)
+
+    def forward(self, x):
+        x = self.flattening(x)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.dropout(x)
+        x = F.softmax(self.fc3(x), dim=1)
+        return x
+    
+def fuse_proba(arr1, arr2):
+    assert arr1.size == arr2.size
+    return np.hstack([arr1, arr2])
+
+def train(X, Y, batch_size = 64, num_epochs = 1000):
+    # input_dim =  X.shape[1]
+    model = MLP()
+    criterion = nn.BCELoss()  # binary cross-entropy loss
+    optimizer = torch.optim.Adam(model.parameters())
+    
+    train_dataset = TensorDataset(torch.Tensor(X), torch.Tensor(Y))
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
+    
+    # Training loop:
+    for epoch in range(num_epochs):
+        running_loss = 0.0
+        for inputs, labels in train_loader: 
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            labels = labels.view(-1, 1)  # reshape labels to match output shape
+            loss = criterion(torch.unsqueeze(outputs[:, 1], dim=1), labels)  # calculate the loss using binary cross-entropy with the positive class probability and the binary label
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+    return model
+
+def evaluate(model, X, Y):
+    test_dataset = TensorDataset(torch.Tensor(X), torch.Tensor(Y))
+    test_loader = DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)
+    model.eval()  # Set the model to evaluation mode
+    with torch.no_grad():  # Disable gradient calculation
+        for inputs, labels in test_loader:
+            test_outputs = model(inputs)  # Get the model's predictions
+            _, predicted = torch.max(test_outputs.data, 1)  # Get the predicted class by choosing the class with highest probability
+            predicted_probabilities = test_outputs[:, 1]  # Get the probability for the positive class
+
+    # Apply a threshold to the predicted probabilities to obtain binary predictions
+    threshold = 0.5
+    binary_predictions = (predicted_probabilities > threshold).float()
+
+    return binary_predictions
+
+def performance(preds, labels):
+    results = []
+    report = classification_report(labels, preds, output_dict=True)
+    fpr, tpr, thresholds = roc_curve(labels, preds)
+    AUROC = auc(fpr, tpr)
+    results = {'f1_score': report['macro avg']['f1-score'], 
+               'precision': report['macro avg']['precision'], 
+               'recall': report['macro avg']['recall'], 
+               'accuracy': report['accuracy'], 
+               'AUROC': AUROC
+              }
+    df_results = pd.DataFrame(results, index=[0]) 
+    df_results = df_results.sort_values(by='AUROC', ascending=False)
+    return df_results
+
+def late_fuse_MLP(X_train, Y_train, X_test, Y_test):
+    # print('training ...')
+    model = train(X_train, Y_train)
+    # print('predicting')
+    pred_test = evaluate(model, X_test, Y_test)
+    test_results_df = performance(pred_test, Y_test)
+    return test_results_df
+
+def late_fuse_MLPX(X_train, Y_train, X_dev, Y_dev, X_test, Y_test):
+    # print('training ...')
+    model = train(X_train, Y_train)
+    # print('predicting')
+    pred_dev = evaluate(model, X_dev, Y_dev)
+    pred_test = evaluate(model, X_test, Y_test)
+    dev_results_df = performance(pred_dev, Y_dev)
+    test_results_df = performance(pred_test, Y_test)
+    print(f'Development {dev_results_df} \n Test {test_results_df}')
+    return dev_results_df, test_results_df
+
+def run_multiple_times(X_train, Y_train, X_dev, Y_dev, X_test, Y_test, n= 10):
+    dev_results_list = []
+    test_results_list = []
+    for i in range(n):
+        dev_results, test_results = late_fuse_MLPX(X_train, Y_train, X_dev, Y_dev, X_test, Y_test)
+        dev_results_list.append(dev_results)
+        test_results_list.append(test_results)
+    dev_results_avg = pd.concat(dev_results_list).groupby(level=0).mean()
+    test_results_avg = pd.concat(test_results_list).groupby(level=0).mean()
+    print(f'Average Development: \n{dev_results_avg} \nAverage Test: \n{test_results_avg}')
+    
+    def plot_confusion_matrix(df, label_col, pred_col, path_to_save=None):
+    """
+    Function to plot a confusion matrix given a DataFrame with true labels and model predictions.
+
+    Parameters:
+        df (pandas DataFrame): Input dataframe containing true labels and model predictions
+        label_col (string): Name of column containing the true labels
+        pred_col (string): Name of column containing the model predictions
+        path_to_save (string or None): Optional path to save the plot as an image. Default is None (no save).
+
+    Returns:
+        None
+
+    Output:
+        Displays a plot of the confusion matrix. If path_to_save is provided, saves the plot as an image.
+    """
+    # Calculate the confusion matrix values
+    tn = ((df[label_col] == 0) & (df[pred_col] == 0)).sum()
+    fp = ((df[label_col] == 0) & (df[pred_col] == 1)).sum()
+    fn = ((df[label_col] == 1) & (df[pred_col] == 0)).sum()
+    tp = ((df[label_col] == 1) & (df[pred_col] == 1)).sum()
+
+    # Create the confusion matrix as a numpy array
+    cm = np.array([[tn, fp], [fn, tp]])
+
+    # Set up the plot
+    fig, ax = plt.subplots(figsize=(4, 4))
+    im = ax.imshow(cm, cmap='Blues')
+
+    # Add the values to the plot
+    for i in range(2):
+        for j in range(2):
+            ax.text(j, i, str(cm[i, j]), ha='center', va='center', color='black', fontsize=18)
+
+    # Add labels and legend to the plot
+    ax.set_xlabel('Predicted label')
+    ax.set_ylabel('True label')
+    ax.set_xticks([0, 1])
+    ax.set_yticks([0, 1])
+    ax.set_xticklabels(['Negative', 'Positive'])
+    ax.set_yticklabels(['Negative', 'Positive'])
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    cbar = ax.figure.colorbar(im, ax=ax)
+
+    # Save or show the plot
+    if path_to_save:
+        plt.savefig(path_to_save, bbox_inches='tight', pad_inches=0.1, dpi = 300)
+    else:
+        plt.show()
+    
+def plot_image(image_path):
+    """
+    Function to plot a single image given the image path.
+
+    Parameters:
+        image_path (string): Path to the image file.
+
+    Returns:
+        None
+
+    Output:
+        Displays a plot of the image.
+    """
+    # Load the image
+    img = plt.imread(image_path)
+    # Plot the image
+    plt.imshow(img)
+    plt.axis('off')
+    plt.show()
+    
+def plot_images(image_paths, file_path = ''):
+    """
+    Function to plot multiple images given a list of image paths.
+
+    Parameters:
+        image_paths (list of strings): List of paths to image files.
+
+    Returns:
+        None
+
+    Output:
+        Displays a plot of the images.
+    """
+    # Set up the subplot grid
+    n_cols = min(5, len(image_paths))
+    n_rows = (len(image_paths) - 1) // n_cols + 1
+    fig, axes = plt.subplots(nrows=n_rows, ncols=n_cols, figsize=(20, 8))
+
+    # Check if axes is one-dimensional and reshape if necessary
+    if n_rows == 1:
+        axes = axes.reshape(1, -1)
+
+    # Plot each image
+    for i, path in enumerate(image_paths):
+        ax = axes[i // n_cols, i % n_cols]
+        img = plt.imread(file_path+path)
+        ax.imshow(img)
+        ax.axis('off')
+        # ax.set_title(path)
+
+    # Show the plot
+    plt.show()
+    return fig
+    
+def error_analysis(data):
+    """Perform error analysis on a dataset of hateful meme detection.
+    
+    :param data: pandas DataFrame with columns 'GBensemble' (model predictions), 'label' (gold labels)
+    :return: 2 pandas DataFrames for false positive and false negatives
+    """
+    # Create a dictionary to store the results
+    results = {}
+    # Get the false positives
+    false_positives = data[(data['GBensemble'] == 1) & (data['label'] == 0)]
+    # Get the false negatives
+    false_negatives = data[(data['GBensemble'] == 0) & (data['label'] == 1)]
+    
+    return false_positives, false_negatives
