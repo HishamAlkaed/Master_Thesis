@@ -21,6 +21,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 from datasets import load_dataset, Image, concatenate_datasets
 from torch.utils.data import DataLoader, Dataset, TensorDataset
+from matplotlib import patches as mpatches
+
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -590,7 +592,7 @@ def run_multiple_times(X_train, Y_train, X_dev, Y_dev, X_test, Y_test, n= 10):
     test_results_avg = pd.concat(test_results_list).groupby(level=0).mean()
     print(f'Average Development: \n{dev_results_avg} \nAverage Test: \n{test_results_avg}')
     
-    def plot_confusion_matrix(df, label_col, pred_col, path_to_save=None):
+def plot_confusion_matrix(df, label_col, pred_col, path_to_save=None):
     """
     Function to plot a confusion matrix given a DataFrame with true labels and model predictions.
 
@@ -675,7 +677,7 @@ def plot_images(image_paths, file_path = ''):
         Displays a plot of the images.
     """
     # Set up the subplot grid
-    n_cols = min(5, len(image_paths))
+    n_cols = min(3, len(image_paths))
     n_rows = (len(image_paths) - 1) // n_cols + 1
     fig, axes = plt.subplots(nrows=n_rows, ncols=n_cols, figsize=(20, 8))
 
@@ -694,8 +696,60 @@ def plot_images(image_paths, file_path = ''):
     # Show the plot
     plt.show()
     return fig
+
+def plot_diff_images(image_paths, df, file_path=''):
+    """
+    Function to plot multiple images given a list of image paths and annotate with model predictions and true label.
+
+    Parameters:
+        image_paths (list of strings): List of paths to image files.
+        df (pandas DataFrame): DataFrame containing columns "bert_base_cased_finetuned", "GBensemble", "bert+resnet",
+        "img" and "label".
+        file_path (string): Path to the directory where the images are located.
+
+    Returns:
+        None
+
+    Output:
+        Displays a plot of the images with legend showing the predictions for each model and the true label.
+    """
+    # Set up the subplot grid
+    n_cols = 2  # always display 2 images per row
+    n_rows = (len(image_paths) - 1) // n_cols + 1
+    fig, axes = plt.subplots(nrows=n_rows, ncols=n_cols, figsize=(20, 8))
+
+    # Check if axes is one-dimensional and reshape if necessary
+    if n_rows == 1:
+        axes = axes.reshape(1, -1)
+
+    # Plot each image
+    for i, path in enumerate(image_paths):
+        ax = axes[i // n_cols, i % n_cols]
+        img = plt.imread(file_path + path)
+        ax.imshow(img)
+        ax.axis('off')
+        # annotate with model predictions and true label
+        label = df.loc[df['img'] == path, 'label'].values[0]
+        ax.set_title('True Label: ' + str(label), fontsize=14)
+        prediction_str = 'Predictions:\n'
+        for model in ["bert_base_cased_finetuned", "GBensemble", "bert+resnet"]:
+            prediction_str += f"{model}: {df.loc[df['img'] == path, model].values[0]}\n"
+        prediction_str = prediction_str.rstrip('\n')  # remove trailing newline character
+        ax.text(0.5, -0.1, prediction_str, verticalalignment='bottom',
+        horizontalalignment='center', transform=ax.transAxes, bbox=dict(facecolor='white', alpha=0.9),
+        fontsize=14)
+    # Remove empty axes
+    for i in range(len(image_paths), n_rows * n_cols):
+        axes.flatten()[-i - 1].remove()
+
+
+    plt.tight_layout()
+
+    # Show the plot
+    plt.show()
+    return fig
     
-def error_analysis(data):
+def error_analysis(data, model):
     """Perform error analysis on a dataset of hateful meme detection.
     
     :param data: pandas DataFrame with columns 'GBensemble' (model predictions), 'label' (gold labels)
@@ -704,8 +758,12 @@ def error_analysis(data):
     # Create a dictionary to store the results
     results = {}
     # Get the false positives
-    false_positives = data[(data['GBensemble'] == 1) & (data['label'] == 0)]
+    false_positives = data[(data[model] == 1) & (data['label'] == 0)]
     # Get the false negatives
-    false_negatives = data[(data['GBensemble'] == 0) & (data['label'] == 1)]
+    false_negatives = data[(data[model] == 0) & (data['label'] == 1)]
+    # Get the true negatives
+    true_negatives = data[(data[model] == 0) & (data['label'] == 0)]
+    # Get the true positives
+    true_positives = data[(data[model] == 1) & (data['label'] == 1)]
     
-    return false_positives, false_negatives
+    return false_positives, false_negatives, true_positives, true_negatives
