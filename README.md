@@ -4,7 +4,8 @@ This repository is the culmination of my Master of Science degree in Text Mining
 
 ## Requirments
 
-The `requirements.txt` file 
+Please refer to the `requirements.txt` file for all needed packages to run the code in this repository. 
+
 ## Code
 
 The `code` folder contains all the code needed for the experiments described in the thesis paper. All code is written using Python. Within the `code` folder, you will find the following files:
