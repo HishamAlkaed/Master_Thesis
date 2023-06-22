@@ -2,6 +2,9 @@
 
 This repository is the culmination of my Master of Science degree in Text Mining at Vrije Universiteit Amsterdam, where I worked on the detection and classification of hateful memes. The dataset used in this project can be found online on Kaggle [here](https://www.kaggle.com/datasets/williamberrios/hateful-memes).
 
+## Requirments
+
+The `requirements.txt` file 
 ## Code
 
 The `code` folder contains all the code needed for the experiments described in the thesis paper. All code is written using Python. Within the `code` folder, you will find the following files:
@@ -31,4 +34,4 @@ The `code` folder contains all the code needed for the experiments described in 
 
 ## Conclusion
 
-The various models implemented in this project demonstrate that it is possible to identify hateful memes using text and image analysis techniques. The unimodal fine-tuned BERT-base-cased model (utilizing only text) created in this project stands out as the most accurate, achieving an overall F1 score of 0.704 and 0.641 on the unseen dev and test split of the dataset, respectively. Followed by the Gradient Boosting Stacked Ensemble technique (utilizing both image and text), achieving 0.686 and 0.631 on the unseen dev and test split of the dataset, respectively. The code in this repository, along with the dataset used and the thesis paper can be used as a starting point for future work in this field.
+The various models implemented in this project demonstrate that it is possible to identify hateful memes using text and image analysis techniques. The unimodal fine-tuned BERT-base-cased model (utilizing only text) created in this project stands out as the most accurate, achieving an overall F1 score of 0.704 and 0.641 on the unseen dev and test split of the dataset, respectively. Followed by the Gradient Boosting Stacked Ensemble technique (utilizing both image and text), achieving 0.686 and 0.631 on the unseen dev and test split of the dataset, respectively. The insights behind this behvaiour are are explained in the thesis paper. The code in this repository, along with the dataset used and the thesis paper can be used as a starting point for future work in this field.
