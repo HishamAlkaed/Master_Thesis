@@ -45,7 +45,7 @@ def get_image_vectors(dataset, split, datafolder):
     This function takes in a dataset and split (train, test or validation) and returns a list of image vectors.
 
     Args:
-        dataset (dict): A dictionary containing the image paths and labels for each split.
+        dataset (dict): A dictionary containing the image paths and labels for each split. It is advised to use TensorDataset for this.
         split (str): The split to get image vectors for (train, test or validation).
 
     Returns:
