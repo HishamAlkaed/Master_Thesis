@@ -17,17 +17,17 @@ The `code` folder contains all the code needed for the experiments described in 
 2. **image_classifier.ipynb:** This file creates the image embeddings and then trains five machine learning models: one convolutional neural network (CNN) and four support vector machine (SVM) configurations.
 3. **baseline.ipynb:** This file contains the implementation of unimodal bag-of-words (BoW) and character-n-grams models.
 
-4. **advancedSVM.ipynb:** This file contains the implementation of the SVM model utilizing stylometric & emotion-based and transformer features.
+4. **advancedSVM.ipynb:** This file contains the implementation of the SVM model utilizing _stylometric & emotion-based_ and _transformer_ features.
 
 5. **bert.ipynb:** This file contains the code used for creating three different BERT models: one using dehatebert directly, one utilizing word embeddings from the dehatebert model fed to an SVM, and one fine-tuning the BERT-base-cased model on the dataset.
 
 6. **ensemble.ipynb:** This file contains the grid search performed to find the best combination of learners and meta-models, along with testing on the dataset's seen splits.
 
-7. **neural_fusion.ipynb:** This file contains the implementation of late fusion using the MLP architecture explained in the thesis. Here, we fuse (the probabilities of) ResNet50 with BoW, character-n-grams, BERT, and advanced features.
+7. **neural_fusion.ipynb:** This file contains the implementation of late fusion using the MLP architecture explained in the thesis. Here, we fuse (the probabilities of) ResNet50 with BoW, character-n-grams, Fine-tuned BERT, and advanced features.
 
 8. **error-analysis.ipynb:** This file contains the code used to perform the error analysis.
 
-9. **ensemble_complete.ipynb:** This file provides an example of how to implement and run the ensemble model for the unseen split of the dataset. It covers the entire process from preprocessing to creating the models, training, and joining them.
+9. **ensemble_complete.ipynb:** This file provides an example of how to implement and run the ensemble model for the unseen split of the dataset. It covers the entire process from preprocessing to creating the models, training, and joining them. This could be used as an illustrative example of how to run a whole experiment from scratch. 
 
 10. **plotting_features.ipynb:** This file contains some exploratory plots of the features created.
 
