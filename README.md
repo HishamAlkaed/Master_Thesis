@@ -2,6 +2,10 @@
 
 This repository is the culmination of my Master of Science degree in Text Mining at Vrije Universiteit Amsterdam, where I worked on the detection and classification of hateful memes. The dataset used in this project can be found online on Kaggle [here](https://www.kaggle.com/datasets/williamberrios/hateful-memes). Upon installation, save the data files in a directory called `data` one level higher than the readme file in this repository (the repository `Master_Thesis` and the data folder next to each other).  
 
+## Paper:
+
+`Thesis_paper_Hisham_Alkaed.pdf` contains the paper of this research. All steps to replicate the experiment are explained in detail along with the motivations. 
+
 ## Requirments
 
 Please refer to the `requirements.txt` file for all the needed packages to run the code in this repository. 
