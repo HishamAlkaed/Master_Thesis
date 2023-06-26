@@ -1,6 +1,6 @@
 # Master's Thesis on the Role of Textual Modality in Hateful Memes Detection 
 
-This repository is the culmination of my Master of Science degree in Text Mining at Vrije Universiteit Amsterdam, where I worked on the detection and classification of hateful memes. The dataset used in this project can be found online on Kaggle [here](https://www.kaggle.com/datasets/williamberrios/hateful-memes). Upon installation, save the data files in a directory called `data` one level higher than the files in this repository (the repository and the data folder next to each other).  
+This repository is the culmination of my Master of Science degree in Text Mining at Vrije Universiteit Amsterdam, where I worked on the detection and classification of hateful memes. The dataset used in this project can be found online on Kaggle [here](https://www.kaggle.com/datasets/williamberrios/hateful-memes). Upon installation, save the data files in a directory called `data` one level higher than the readme file in this repository (the repository `Master_Thesis` and the data folder next to each other).  
 
 ## Requirments
 
